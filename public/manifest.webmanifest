@@ -1,0 +1,14 @@
+{
+  "name": "型号图片批量上传",
+  "short_name": "图片上传",
+  "description": "按型号文件夹匹配多维表格记录并批量上传图片附件",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbfbf9",
+  "theme_color": "#b84f35",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
