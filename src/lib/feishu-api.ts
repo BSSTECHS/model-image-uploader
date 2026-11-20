@@ -94,7 +94,10 @@ export async function uploadFolderToFeishu(
   if (!attachmentFieldId) throw new Error('未选择目标附件字段')
   const attachmentField = await table.getField<IAttachmentField>(attachmentFieldId)
   const uploaded = folder.files.map((file, index) => toAttachment(file, tokens[index]))
-  const existing = overwrite ? [] : await attachmentField.getValue(folder.recordId)
+  // 空单元格 getValue 返回 null（类型标注没写），按无附件处理；读到别的东西就停，免得追加时把原附件冲掉
+  const current = overwrite ? null : await attachmentField.getValue(folder.recordId)
+  if (current != null && !Array.isArray(current)) throw new Error('读取原附件失败，未修改该记录')
+  const existing = current ?? []
   if (existing.length + uploaded.length > MAX_ATTACHMENTS) {
     throw new Error(`写入前复核：附件共 ${existing.length + uploaded.length} 个，超过 ${MAX_ATTACHMENTS} 个上限，未修改该记录`)
   }
