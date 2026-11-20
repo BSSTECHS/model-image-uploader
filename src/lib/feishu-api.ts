@@ -1,8 +1,13 @@
 import {
   bitable,
   FieldType,
+  FilterConjunction,
+  FilterOperator,
+  type FilterInfoCondition,
   type IAttachmentField,
+  type IGetRecordsFilterInfo,
   type IOpenAttachment,
+  type IRecord,
 } from '@lark-base-open/js-sdk'
 import { cellToText, MAX_ATTACHMENTS, type FolderGroup, type RecordEntry } from './folder-matcher'
 
@@ -21,7 +26,7 @@ export interface PluginContext {
 }
 
 export interface UploadGateway {
-  loadRecords(tableId: string, modelFieldId: string, attachmentFieldId: string): Promise<RecordEntry[]>
+  loadRecords(tableId: string, modelFieldId: string, attachmentFieldId: string, modelNames: string[]): Promise<RecordEntry[]>
   uploadFolder(tableId: string, folder: FolderGroup, overwrite: boolean, attachmentFieldId: string): Promise<void>
 }
 
@@ -41,25 +46,56 @@ export async function getFeishuContext(): Promise<PluginContext> {
   return { tableId: table.id, tableName, modelFields, attachmentFields, modelFieldId, attachmentFieldId }
 }
 
-export async function loadFeishuRecords(tableId: string, modelFieldId: string, attachmentFieldId: string): Promise<RecordEntry[]> {
+// ponytail: 单次筛选条件数的上限没查到官方值，先 50 个一批；超限报错会走下面的整表兜底
+const FILTER_CHUNK = 50
+
+/**
+ * 只读型号对得上的记录：文本字段用「包含」（比精确匹配宽，带首尾空格的也能取回），
+ * 数字字段用「等于」；取回后仍由 matchFolders 精确比对。筛选失败就退回读整张表。
+ */
+export async function loadFeishuRecords(
+  tableId: string,
+  modelFieldId: string,
+  attachmentFieldId: string,
+  modelNames: string[],
+): Promise<RecordEntry[]> {
   const table = await bitable.base.getTableById(tableId)
-  const records: RecordEntry[] = []
-  let pageToken: number | undefined
-
-  do {
-    const response = await table.getRecordsByPage({ pageSize: 200, pageToken })
-    for (const record of response.records) {
-      const attachments = record.fields[attachmentFieldId]
-      records.push({
-        recordId: record.recordId,
-        modelText: cellToText(record.fields[modelFieldId]),
-        existingCount: Array.isArray(attachments) ? attachments.length : 0,
-      })
+  const toEntry = (record: IRecord): RecordEntry => {
+    const attachments = record.fields[attachmentFieldId]
+    return {
+      recordId: record.recordId,
+      modelText: cellToText(record.fields[modelFieldId]),
+      existingCount: Array.isArray(attachments) ? attachments.length : 0,
     }
-    pageToken = response.hasMore ? response.pageToken : undefined
-  } while (pageToken !== undefined)
+  }
+  const readAll = async (filter?: IGetRecordsFilterInfo): Promise<IRecord[]> => {
+    const records: IRecord[] = []
+    let pageToken: number | undefined
+    do {
+      const response = await table.getRecordsByPage({ pageSize: 200, pageToken, filter })
+      records.push(...response.records)
+      pageToken = response.hasMore ? response.pageToken : undefined
+    } while (pageToken !== undefined)
+    return records
+  }
 
-  return records
+  try {
+    const isNumber = (await (await table.getField(modelFieldId)).getType()) === FieldType.Number
+    const conditions: FilterInfoCondition[] = [...new Set(modelNames)].filter(Boolean).flatMap((name): FilterInfoCondition[] => {
+      if (!isNumber) return [{ fieldId: modelFieldId, operator: FilterOperator.Contains, value: name }]
+      const value = Number(name)
+      return Number.isFinite(value) ? [{ fieldId: modelFieldId, operator: FilterOperator.Is, value }] : []
+    })
+    const byId = new Map<string, IRecord>()
+    for (let start = 0; start < conditions.length; start += FILTER_CHUNK) {
+      const filter = { conjunction: FilterConjunction.Or, conditions: conditions.slice(start, start + FILTER_CHUNK) }
+      for (const record of await readAll(filter)) byId.set(record.recordId, record)
+    }
+    return [...byId.values()].map(toEntry)
+  } catch (error) {
+    console.warn('按型号筛选读取失败，改为读取整张表', error)
+    return (await readAll()).map(toEntry)
+  }
 }
 
 function toAttachment(file: File, token: string): IOpenAttachment {

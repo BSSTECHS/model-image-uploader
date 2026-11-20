@@ -43,7 +43,7 @@ function errorMessage(error: unknown): string {
 function ImageThumb({ file }: { file: File }) {
   const url = useMemo(() => URL.createObjectURL(file), [file])
   useEffect(() => () => URL.revokeObjectURL(url), [url])
-  return <img className="folder-thumb" src={url} alt="文件夹内首张图片预览" />
+  return <img className="folder-thumb" src={url} alt="文件夹内首张图片预览" loading="lazy" decoding="async" />
 }
 
 const statusText: Record<FolderGroup['status'], string> = {
@@ -137,7 +137,10 @@ export default function App() {
     setNotice('')
     try {
       const nextRecords = forceRecords || !records.length
-        ? isDemo ? getDemoRecords(nextModelFieldId, nextAttachmentFieldId) : await gateway!.loadRecords(context.tableId, nextModelFieldId, nextAttachmentFieldId)
+        ? isDemo
+          ? getDemoRecords(nextModelFieldId, nextAttachmentFieldId)
+          : await gateway!.loadRecords(context.tableId, nextModelFieldId, nextAttachmentFieldId,
+            nextFolders.filter((folder) => !folder.isRootGroup && folder.files.length).map((folder) => folder.normalizedName))
         : records
       setRecords(nextRecords)
       const matched = matchFolders(nextFolders, nextRecords)
